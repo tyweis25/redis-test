@@ -5,7 +5,7 @@
   },
   "user": "ubuntu",
   "install": "python3 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements.txt",
-  "start": "redis-server --daemonize yes --port 6379",
+  "start": "redis-cli -p 6379 ping >/dev/null 2>&1 || redis-server --daemonize yes --port 6379 --dir /tmp",
   "terminals": [
     {
       "name": "cache-app",

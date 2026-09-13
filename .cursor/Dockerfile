@@ -10,6 +10,7 @@ RUN apt-get update \
         python3-pip \
         redis-server \
         redis-tools \
+        iproute2 \
         ca-certificates \
         curl \
     && rm -rf /var/lib/apt/lists/*

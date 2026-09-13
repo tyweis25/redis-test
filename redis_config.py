@@ -33,3 +33,14 @@ AGENT_MEMORY_STORE_ID = "2b6f7a2569f64665b030a10695021eee"
 # Replace this with the real API key from the Redis Cloud console before
 # running agent_memory_demo.py - it will fail with an auth error otherwise.
 AGENT_MEMORY_API_KEY = "<AGENT_MEMORY_API_KEY>"
+
+# --- Redis LangCache (used by langcache_demo.py) ---
+# Settings for the `langcache` SDK, which talks to a Redis Cloud LangCache
+# semantic-caching service (https://redis.io/docs/latest/develop/ai/langcache/)
+# rather than a plain Redis database. Find these values on your cache's
+# details page in the Redis Cloud console.
+LANGCACHE_SERVER_URL = "https://aws-us-east-1.langcache.redis.io"
+LANGCACHE_CACHE_ID = "2717482cd1664b7eae9ade2a4e7a3cd5"
+# Replace this with the real API key from the Redis Cloud console before
+# running langcache_demo.py - it will fail with an auth error otherwise.
+LANGCACHE_API_KEY = "<LANGCACHE_API_KEY>"

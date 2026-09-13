@@ -52,7 +52,11 @@ def main():
 
             # 3. Store a fact in long-term memory
             agent_memory.bulk_create_long_term_memories(memories=[
-                {"id": "memory-1", "text": "Semantic memory stores facts and knowledge for later retrieval."},
+                {
+                    "id": "memory-1",
+                    "text": "Semantic memory stores facts and knowledge for later retrieval.",
+                    "owner_id": "user-123",
+                },
             ])
 
             # 4. Search long-term memory

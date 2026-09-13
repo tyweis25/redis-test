@@ -1,0 +1,24 @@
+{
+  "name": "redis-test",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "user": "ubuntu",
+  "install": "python3 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements.txt",
+  "start": "redis-server --daemonize yes --port 6379",
+  "terminals": [
+    {
+      "name": "cache-app",
+      "command": ".venv/bin/python app.py"
+    },
+    {
+      "name": "sessions-app",
+      "command": ".venv/bin/python sessions_demo.py"
+    },
+    {
+      "name": "rate-limit-app",
+      "command": ".venv/bin/python rate_limit_demo.py"
+    }
+  ],
+  "ports": [5000, 5001, 5002]
+}

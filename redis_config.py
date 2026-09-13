@@ -22,3 +22,14 @@ REDIS_PASSWORD = "HCNzJ6hPI2yRiCfzn2JqcJDsRvgDjYbt"
 REDIS_TLS = False  # this database's connection string used redis:// (not rediss://)
 # If scripts fail with an SSL/handshake-related error, try flipping
 # REDIS_TLS to True instead.
+
+# --- Redis Cloud Agent Memory (used by agent_memory_demo.py) ---
+# Settings for the `redis_agent_memory` SDK, which talks to a Redis Cloud
+# Agent Memory store (https://cloud.redis.io/#/agent-memory) rather than a
+# plain Redis database. Find these values on the store's page in the Redis
+# Cloud console.
+AGENT_MEMORY_BASE_URL = "https://aws-us-east-1.memory.redis.io"
+AGENT_MEMORY_STORE_ID = "2b6f7a2569f64665b030a10695021eee"
+# Replace this with the real API key from the Redis Cloud console before
+# running agent_memory_demo.py - it will fail with an auth error otherwise.
+AGENT_MEMORY_API_KEY = "<AGENT_MEMORY_API_KEY>"

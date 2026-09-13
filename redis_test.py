@@ -1,37 +1,19 @@
 """
 Simple Python app to test a Redis connection.
 
-Reads connection settings from environment variables so you can point
-this at either your local Rancher Desktop Redis or Redis Cloud without
-editing code:
-
-    REDIS_HOST      default: localhost
-    REDIS_PORT      default: 6379
-    REDIS_PASSWORD  default: none
-    REDIS_TLS       default: false  (set to "true" for Redis Cloud if
-                                      your database requires TLS)
-
-For Redis Cloud, set these to the values from your database's
-Configuration tab, e.g.:
-
-    export REDIS_HOST="redis-12345.c1.us-east-1-1.ec2.redns.redis-cloud.com"
-    export REDIS_PORT="12345"
-    export REDIS_PASSWORD="your-default-user-password"
-    export REDIS_TLS="true"
+Connection settings (host/port/password/TLS) come from redis_config.py,
+so you only need to edit that one file to point every script at either
+your local Rancher Desktop Redis or Redis Cloud.
 
 Install the client library first:
     pip install redis
 """
 
-import os
 import redis
 import sys
 
-# --- Connection settings ---
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") or None
-REDIS_TLS = os.getenv("REDIS_TLS", "false").lower() == "true"
+from redis_config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS
+
 REDIS_DB = 0
 
 

@@ -19,21 +19,21 @@ You should see "200" for the first few requests, then "429" once the
 limit is hit, until the window resets.
 """
 
-import os
 import time
 
 import redis
 from flask import Flask, jsonify, request
 
+from redis_config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS
+
 app = Flask(__name__)
 
-# Set REDIS_HOST/REDIS_PORT/REDIS_PASSWORD/REDIS_TLS env vars to point at
-# Redis Cloud instead of local Redis. See redis_test.py for the full list.
+# Edit redis_config.py to point this at Redis Cloud vs. local Redis.
 r = redis.Redis(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
-    password=os.getenv("REDIS_PASSWORD") or None,
-    ssl=os.getenv("REDIS_TLS", "false").lower() == "true",
+    host=REDIS_HOST,
+    port=REDIS_PORT,
+    password=REDIS_PASSWORD,
+    ssl=REDIS_TLS,
     decode_responses=True,
 )
 

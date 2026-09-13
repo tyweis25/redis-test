@@ -50,6 +50,9 @@ SERVERS = {
         "file": "app.py",
         "module": cache_aside_module,
         "port": 5000,
+        # None of these apps define a route for "/", so "Open" must point at
+        # a real endpoint - otherwise it 404s ("Not Found") every time.
+        "open_path": "/health",
         "description": "Caches a slow \"database\" lookup in Redis so repeat requests are fast.",
         "try_it": [
             ("GET", "/health"),
@@ -63,6 +66,7 @@ SERVERS = {
         "file": "sessions_demo.py",
         "module": sessions_module,
         "port": 5001,
+        "open_path": "/profile",  # returns a clean 401 JSON error, not a 404, when logged out
         "description": "Stores login sessions in Redis instead of signed cookies.",
         "try_it": [
             ("POST", "/login", '{"username": "ty"}'),
@@ -75,6 +79,7 @@ SERVERS = {
         "file": "rate_limit_demo.py",
         "module": rate_limit_module,
         "port": 5002,
+        "open_path": "/api/data",
         "description": "Fixed-window rate limiting backed by a Redis counter.",
         "try_it": [
             ("GET", "/api/data"),
@@ -247,7 +252,7 @@ def render_index(message=None):
             try_it_lines.append(f"<code>{escape(cmd)}</code>")
 
         action = (
-            f'<a class="open-link" href="http://localhost:{info["port"]}/" target="_blank">Open</a>'
+            f'<a class="open-link" href="http://localhost:{info["port"]}{info["open_path"]}" target="_blank">Open</a>'
             if running
             else f'<form method="post" action="{url_for("start_server", key=key)}">'
             f'<button type="submit">Start server</button></form>'

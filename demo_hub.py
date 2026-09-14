@@ -73,6 +73,13 @@ SERVERS = {
             ("GET", "/profile"),
             ("POST", "/logout"),
         ],
+        # Real HTML forms (not curl) so you can log in/out from the browser
+        # and then click "Open" to see /profile reflect it - opens each
+        # response in a new tab so the hub page itself isn't navigated away.
+        "live_forms": [
+            {"label": "Log in", "action_path": "/login", "fields": [("username", "ty")]},
+            {"label": "Log out", "action_path": "/logout", "fields": []},
+        ],
     },
     "rate_limit": {
         "title": "Rate Limiting",
@@ -258,11 +265,29 @@ def render_index(message=None):
             f'<button type="submit">Start server</button></form>'
         )
 
+        live_forms_html = ""
+        if running and info.get("live_forms"):
+            forms = []
+            for form in info["live_forms"]:
+                field_inputs = "".join(
+                    f'<input type="text" name="{escape(name)}" value="{escape(default)}" '
+                    f'style="border-radius:6px;border:1px solid #262a33;background:#0b0d11;'
+                    f'color:#e7e9ee;padding:.4rem .55rem;font-size:.85rem;margin-right:.4rem;width:110px;">'
+                    for name, default in form["fields"]
+                )
+                forms.append(
+                    f'<form method="post" action="http://localhost:{info["port"]}{form["action_path"]}" '
+                    f'target="_blank" style="display:inline-flex;align-items:center;margin-right:.5rem;">'
+                    f'{field_inputs}<button type="submit" class="secondary">{escape(form["label"])}</button></form>'
+                )
+            live_forms_html = f'<div style="margin-top:.6rem;">{"".join(forms)}</div>'
+
         server_cards.append(f"""
         <div class="card">
           <h3>{escape(info['title'])} {badge}</h3>
           <p>{escape(info['description'])} <code class="file">{escape(info['file'])}</code></p>
           {action}
+          {live_forms_html}
           <div class="try-it">{''.join(try_it_lines)}</div>
         </div>
         """)

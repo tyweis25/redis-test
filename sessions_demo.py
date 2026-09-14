@@ -56,7 +56,9 @@ def session_key(session_id: str) -> str:
 @app.route("/login", methods=["POST"])
 def login():
     body = request.get_json(silent=True) or {}
-    username = body.get("username")
+    # Also accept a plain HTML form POST (application/x-www-form-urlencoded),
+    # e.g. from a browser <form>, in addition to the JSON body shown above.
+    username = body.get("username") or request.form.get("username")
     if not username:
         return jsonify({"error": "username is required"}), 400
 

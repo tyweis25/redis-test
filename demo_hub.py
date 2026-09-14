@@ -62,6 +62,7 @@ SERVERS = {
             "Start the server, then Open /health to confirm Redis is connected.",
             "Open /users/1 twice: first call ~2s (source: database), second ~0.06s (source: cache).",
             "Or use the curl commands below, then DELETE /cache/users/1 and fetch again.",
+            "A Redis SET NX lock keeps a thundering herd to a single slow fill.",
         ],
         "try_it": [
             ("GET", "/health"),
@@ -75,7 +76,7 @@ SERVERS = {
         "file": "sessions_demo.py",
         "module": sessions_module,
         "port": 5001,
-        "open_path": "/profile",  # returns a clean 401 JSON error, not a 404, when logged out
+        "open_path": "/",
         "description": (
             "Stores login sessions in Redis instead of signed cookies. The browser only "
             "gets an opaque session_id cookie; username and login time live server-side "
@@ -83,10 +84,10 @@ SERVERS = {
             "{\"error\": \"not logged in\"} — that's expected until you log in."
         ),
         "how": [
-            "Start the server, then use Log in (username defaults to ty) — a new tab shows logged in as ty.",
-            "Click Open: /profile now returns the session JSON from Redis.",
-            "Click Log out, then Open again: /profile goes back to not logged in.",
-            "The curl commands below do the same flow with a cookie jar.",
+            "Start the server, then Open / for the HTML login page, or use Log in (username defaults to ty).",
+            "A new tab shows the session; Open /profile for the JSON from Redis.",
+            "Click Log out, then Open again: back to not logged in (Redis key deleted).",
+            "The curl commands below do the same flow with a cookie jar. Optional: pass ttl=60.",
         ],
         "try_it": [
             ("POST", "/login", '{"username": "ty"}'),
@@ -108,17 +109,20 @@ SERVERS = {
         "port": 5002,
         "open_path": "/api/data",
         "description": (
-            "Fixed-window rate limiter: each client IP gets 5 requests per 30-second "
-            "window, counted with a Redis INCR key that expires with the window. "
-            "Requests 1–5 return 200 with remaining count; 6+ return 429 with Retry-After."
+            "Rate limiter: 5 requests per 30-second window. Default is a fixed clock "
+            "slot (INCR). Add ?algo=sliding for a sorted-set window that cannot be "
+            "gamed at a slot boundary. Override client/limit/window with "
+            "X-Client-Id, X-RateLimit-Limit, X-RateLimit-Window."
         ),
         "how": [
             "Start the server, then click Open (or fire /api/data) six or more times quickly.",
             "First five responses: requests_remaining counts down from 4 to 0.",
             "Sixth and later: {\"error\": \"rate limit exceeded\"} until the 30s window resets.",
+            "Try /api/data?algo=sliding to see the ZSET sliding window.",
         ],
         "try_it": [
             ("GET", "/api/data"),
+            ("GET", "/api/data?algo=sliding"),
         ],
     },
 }
@@ -130,12 +134,11 @@ SCRIPTS = {
         "description": (
             "Sanity-check against Redis Cloud: PING, string set/get, INCR, list RPUSH/"
             "LRANGE, hash HSET/HGETALL, a key with a 10-second TTL, and INFO server. "
-            "Leaves a few keys (greeting, counter, mylist, user:1) with no TTL."
+            "Keys live under the demo: prefix so they cannot collide with other demos."
         ),
         "how": [
             "Click Run, or from a terminal: python3 redis_test.py",
             "Expect: PING True, counter 2, list [a, b, c], hash {name: Ty}, Redis 8.x.",
-            "Note: user:1 is stored as a hash, which collides with app.py's string cache key.",
         ],
     },
     "agent_memory": {
@@ -150,6 +153,18 @@ SCRIPTS = {
             "Fill in AGENT_MEMORY_API_KEY in redis_config.py (from cloud.redis.io Agent Memory).",
             "Click Run, or: python3 agent_memory_demo.py",
             "A placeholder key fails cleanly with 403; a real key prints session + search results.",
+        ],
+    },
+    "streams": {
+        "title": "Redis Streams (durable vs Pub/Sub)",
+        "file": "streams_demo.py",
+        "description": (
+            "Writes messages to a Redis Stream, then a consumer group reads them. "
+            "Unlike Pub/Sub, the messages are still there even if nobody was listening."
+        ),
+        "how": [
+            "Click Run, or: python3 streams_demo.py",
+            "Expect XADD of 3 messages, then the group reads all 3 after the fact.",
         ],
     },
     "langcache": {
@@ -172,7 +187,7 @@ PUBSUB = {
     "title": "Pub/Sub Notifications",
     "files": "pubsub_publisher.py + pubsub_subscriber.py",
     "description": (
-        "Fire-and-forget broadcast: the subscriber listens on the 'notifications' channel, "
+        "Fire-and-forget broadcast: the subscriber listens on the 'demo:notifications' channel, "
         "then the publisher sends 4 messages. Each is delivered live to whoever is "
         "subscribed at that moment. If nobody is listening, the message is gone "
         "(unlike a queue or Redis Streams)."
@@ -202,7 +217,13 @@ def _start_server(key):
 
         def _serve():
             try:
-                info["module"].app.run(host="0.0.0.0", port=info["port"], debug=False, use_reloader=False)
+                info["module"].app.run(
+                    host="0.0.0.0",
+                    port=info["port"],
+                    debug=False,
+                    use_reloader=False,
+                    threaded=True,
+                )
             except Exception as exc:  # pragma: no cover - background thread
                 print(f"[demo_hub] {key} server stopped: {exc}", file=sys.stderr)
 
@@ -401,6 +422,23 @@ def render_index(message=None):
     """)
 
     banner = f'<div class="banner">{escape(message)}</div>' if message else ""
+    eval_card = f"""
+    <div class="card">
+      <h3>Eval suite</h3>
+      <p>Scored checks for every demo: assertions, latencies, isolation, and
+      retrieval quality. Writes a pass/fail table (and optional JSON).
+      LangCache / Agent Memory are skipped without real API keys.
+      <code class="file">run_evals.py</code></p>
+      <ol class="how">
+        <li>Click Run eval suite (takes ~30–60s; rate-limit window wait is ~8s).</li>
+        <li>Or: <code>python3 run_evals.py</code> / <code>python3 run_evals.py --json</code></li>
+        <li>Exit code 0 only if every non-skipped check passed.</li>
+      </ol>
+      <form method="post" action="{url_for('run_script', key='evals')}">
+        <button type="submit">Run eval suite</button>
+      </form>
+    </div>
+    """
 
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>Redis Demos</title>{PAGE_STYLE}</head>
@@ -408,6 +446,8 @@ def render_index(message=None):
   <h1>Redis Demos</h1>
   <p class="lede">All demos run against the Redis Cloud database configured in <code class="file">redis_config.py</code>.</p>
   {banner}
+  <h2>Eval</h2>
+  {eval_card}
   <h2>One-shot scripts</h2>
   {''.join(script_cards)}
   <h2>Long-running servers</h2>
@@ -450,6 +490,14 @@ def run_script(key):
     if key == "pubsub":
         output, returncode = _run_pubsub_pair()
         return render_result("Pub/Sub Notifications", output, returncode)
+
+    if key == "evals":
+        try:
+            result = _run_subprocess("run_evals.py", timeout=180)
+        except subprocess.TimeoutExpired:
+            return render_result("Eval suite", "Timed out after 180 seconds.", 1)
+        output = result.stdout + result.stderr
+        return render_result("Eval suite", output, result.returncode)
 
     if key not in SCRIPTS:
         return redirect(url_for("index", msg=f"Unknown script: {key}"))

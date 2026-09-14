@@ -18,7 +18,7 @@ import time
 
 import redis
 
-from redis_config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS
+from redis_config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS, prefixed
 
 # Edit redis_config.py to point this at Redis Cloud vs. local Redis.
 r = redis.Redis(
@@ -29,7 +29,7 @@ r = redis.Redis(
     decode_responses=True,
 )
 
-CHANNEL = "notifications"
+CHANNEL = prefixed("notifications")
 
 
 def main():

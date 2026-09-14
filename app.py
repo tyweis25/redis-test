@@ -23,7 +23,7 @@ import time
 import redis
 from flask import Flask, jsonify
 
-from redis_config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS
+from redis_config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS, prefixed
 
 app = Flask(__name__)
 
@@ -39,6 +39,11 @@ r = redis.Redis(
 )
 
 CACHE_TTL_SECONDS = 30  # how long a cached entry stays valid
+LOCK_TTL_SECONDS = 5
+
+
+def cache_key_for(user_id: int) -> str:
+    return prefixed("cache", "user", str(user_id))
 
 
 def fetch_user_from_slow_source(user_id: int) -> dict:
@@ -55,23 +60,42 @@ def fetch_user_from_slow_source(user_id: int) -> dict:
     }
 
 
+def _hit(cached: str, start: float):
+    elapsed = round(time.time() - start, 4)
+    return jsonify({
+        "source": "cache",
+        "elapsed_seconds": elapsed,
+        "data": json.loads(cached),
+    })
+
+
 @app.route("/users/<int:user_id>", methods=["GET"])
 def get_user(user_id):
-    cache_key = f"user:{user_id}"
+    cache_key = cache_key_for(user_id)
+    lock_key = prefixed("cache", "lock", str(user_id))
     start = time.time()
 
     cached = r.get(cache_key)
     if cached is not None:
-        elapsed = round(time.time() - start, 4)
-        return jsonify({
-            "source": "cache",
-            "elapsed_seconds": elapsed,
-            "data": json.loads(cached),
-        })
+        return _hit(cached, start)
 
-    # Cache miss - do the "expensive" work
-    data = fetch_user_from_slow_source(user_id)
-    r.setex(cache_key, CACHE_TTL_SECONDS, json.dumps(data))
+    # Stampede-safe fill: only one request does the slow lookup.
+    got_lock = r.set(lock_key, "1", nx=True, ex=LOCK_TTL_SECONDS)
+    if not got_lock:
+        for _ in range(40):
+            time.sleep(0.1)
+            cached = r.get(cache_key)
+            if cached is not None:
+                return _hit(cached, start)
+
+    try:
+        cached = r.get(cache_key)
+        if cached is not None:
+            return _hit(cached, start)
+        data = fetch_user_from_slow_source(user_id)
+        r.setex(cache_key, CACHE_TTL_SECONDS, json.dumps(data))
+    finally:
+        r.delete(lock_key)
 
     elapsed = round(time.time() - start, 4)
     return jsonify({
@@ -83,7 +107,7 @@ def get_user(user_id):
 
 @app.route("/cache/users/<int:user_id>", methods=["DELETE"])
 def invalidate_user_cache(user_id):
-    cache_key = f"user:{user_id}"
+    cache_key = cache_key_for(user_id)
     deleted = r.delete(cache_key)
     return jsonify({
         "cache_key": cache_key,
@@ -101,4 +125,4 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True, threaded=True)

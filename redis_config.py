@@ -23,6 +23,15 @@ REDIS_TLS = False  # this database's connection string used redis:// (not rediss
 # If scripts fail with an SSL/handshake-related error, try flipping
 # REDIS_TLS to True instead.
 
+# Namespace every demo/eval key so scripts don't collide (e.g. redis_test.py
+# used to leave a hash at user:1 that broke app.py's string cache key).
+KEY_PREFIX = "demo"
+
+
+def prefixed(*parts: str) -> str:
+    """Build a Redis key like demo:cache:user:1."""
+    return ":".join((KEY_PREFIX, *parts))
+
 # --- Redis Cloud Agent Memory (used by agent_memory_demo.py) ---
 # Settings for the `redis_agent_memory` SDK, which talks to a Redis Cloud
 # Agent Memory store (https://cloud.redis.io/#/agent-memory) rather than a

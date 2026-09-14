@@ -30,9 +30,9 @@ import secrets
 import time
 
 import redis
-from flask import Flask, jsonify, request, make_response
+from flask import Flask, jsonify, request, make_response, render_template_string
 
-from redis_config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS
+from redis_config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS, prefixed
 
 app = Flask(__name__)
 
@@ -50,7 +50,61 @@ COOKIE_NAME = "session_id"
 
 
 def session_key(session_id: str) -> str:
-    return f"session:{session_id}"
+    return prefixed("session", session_id)
+
+
+def _ttl_from_request() -> int:
+    raw = None
+    body = request.get_json(silent=True) or {}
+    raw = body.get("ttl") or request.form.get("ttl") or request.args.get("ttl")
+    if raw is None:
+        return SESSION_TTL_SECONDS
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return SESSION_TTL_SECONDS
+
+
+_PAGE = """
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Sessions demo</title>
+<style>
+  body { font-family: sans-serif; max-width: 32rem; margin: 2rem auto; }
+  pre { background: #111; color: #eee; padding: 1rem; border-radius: 8px; }
+  form { margin: .75rem 0; }
+  input, button { padding: .4rem .6rem; }
+</style></head><body>
+  <h1>Redis-backed session</h1>
+  <p>Cookie holds only an opaque id. Data lives in Redis and can be revoked.</p>
+  <form method="post" action="/login">
+    <input name="username" value="ty" />
+    <button type="submit">Log in</button>
+  </form>
+  <form method="post" action="/logout"><button type="submit">Log out</button></form>
+  <p><a href="/profile">View profile (JSON)</a></p>
+  {% if session %}
+  <pre>{{ session }}</pre>
+  {% elif error %}
+  <pre>{{ error }}</pre>
+  {% endif %}
+</body></html>
+"""
+
+
+@app.route("/", methods=["GET"])
+def home():
+    session_id = request.cookies.get(COOKIE_NAME)
+    session = None
+    error = None
+    if not session_id:
+        error = {"error": "not logged in"}
+    else:
+        raw = r.get(session_key(session_id))
+        if raw is None:
+            error = {"error": "session expired or invalid"}
+        else:
+            session = json.loads(raw)
+    return render_template_string(_PAGE, session=session, error=error)
 
 
 @app.route("/login", methods=["POST"])
@@ -62,6 +116,7 @@ def login():
     if not username:
         return jsonify({"error": "username is required"}), 400
 
+    ttl = _ttl_from_request()
     # Create a new opaque session ID - never expose internal user data in it
     session_id = secrets.token_urlsafe(24)
     session_data = {
@@ -69,10 +124,16 @@ def login():
         "logged_in_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
-    r.setex(session_key(session_id), SESSION_TTL_SECONDS, json.dumps(session_data))
+    r.setex(session_key(session_id), ttl, json.dumps(session_data))
 
-    resp = make_response(jsonify({"message": f"logged in as {username}"}))
-    resp.set_cookie(COOKIE_NAME, session_id, httponly=True, max_age=SESSION_TTL_SECONDS)
+    wants_html = "text/html" in (request.headers.get("Accept") or "") and not request.is_json
+    if wants_html or request.form:
+        resp = make_response(render_template_string(
+            _PAGE, session=session_data, error=None
+        ))
+    else:
+        resp = make_response(jsonify({"message": f"logged in as {username}"}))
+    resp.set_cookie(COOKIE_NAME, session_id, httponly=True, max_age=ttl)
     return resp
 
 
@@ -98,7 +159,10 @@ def logout():
     if session_id:
         r.delete(session_key(session_id))
 
-    resp = make_response(jsonify({"message": "logged out"}))
+    if request.form or "text/html" in (request.headers.get("Accept") or ""):
+        resp = make_response(render_template_string(_PAGE, session=None, error={"error": "not logged in"}))
+    else:
+        resp = make_response(jsonify({"message": "logged out"}))
     resp.delete_cookie(COOKIE_NAME)
     return resp
 

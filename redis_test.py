@@ -12,7 +12,7 @@ Install the client library first:
 import redis
 import sys
 
-from redis_config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS
+from redis_config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS, prefixed
 
 REDIS_DB = 0
 
@@ -35,32 +35,32 @@ def main():
         print(f"PING -> {pong}")
 
         # 2. String set/get
-        r.set("greeting", "hello from python")
-        value = r.get("greeting")
+        r.set(prefixed("greeting"), "hello from python")
+        value = r.get(prefixed("greeting"))
         print(f"GET greeting -> {value}")
 
         # 3. Increment a counter
-        r.set("counter", 0)
-        r.incr("counter")
-        r.incr("counter")
-        count = r.get("counter")
+        r.set(prefixed("counter"), 0)
+        r.incr(prefixed("counter"))
+        r.incr(prefixed("counter"))
+        count = r.get(prefixed("counter"))
         print(f"Counter after two increments -> {count}")
 
         # 4. List operations
-        r.delete("mylist")
-        r.rpush("mylist", "a", "b", "c")
-        items = r.lrange("mylist", 0, -1)
+        r.delete(prefixed("mylist"))
+        r.rpush(prefixed("mylist"), "a", "b", "c")
+        items = r.lrange(prefixed("mylist"), 0, -1)
         print(f"List contents -> {items}")
 
-        # 5. Hash operations
-        r.delete("user:1")
-        r.hset("user:1", mapping={"name": "Ty", "role": "tester"})
-        user = r.hgetall("user:1")
+        # 5. Hash operations (namespaced so it cannot collide with app.py's cache)
+        r.delete(prefixed("hash", "user", "1"))
+        r.hset(prefixed("hash", "user", "1"), mapping={"name": "Ty", "role": "tester"})
+        user = r.hgetall(prefixed("hash", "user", "1"))
         print(f"Hash user:1 -> {user}")
 
         # 6. Key with expiration
-        r.set("temp_key", "expires soon", ex=10)
-        ttl = r.ttl("temp_key")
+        r.set(prefixed("temp_key"), "expires soon", ex=10)
+        ttl = r.ttl(prefixed("temp_key"))
         print(f"TTL on temp_key -> {ttl} seconds")
 
         # 7. Server info

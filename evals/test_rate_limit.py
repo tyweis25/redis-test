@@ -5,22 +5,32 @@ from __future__ import annotations
 import time
 
 import rate_limit_demo
-from evals.common import Check
+from evals.common import Check, cleanup_prefix, redis_client
 
 
 def _codes(client, n, **kwargs):
     return [client.get("/api/data", **kwargs).status_code for _ in range(n)]
 
 
+def _wait_for_fixed_slot(window: int, need_s: float = 2.5) -> None:
+    """Avoid firing a burst across a clock-slot boundary."""
+    remaining = window - (time.time() % window)
+    if remaining < need_s:
+        time.sleep(remaining + 0.05)
+
+
 def run() -> list[Check]:
     checks: list[Check] = []
+    cleanup_prefix(redis_client(), "ratelimit")
     client = rate_limit_demo.app.test_client()
+    window = 8
     headers = {
         "X-Client-Id": "eval-fixed-1",
         "X-RateLimit-Limit": "5",
-        "X-RateLimit-Window": "8",
+        "X-RateLimit-Window": str(window),
     }
 
+    _wait_for_fixed_slot(window)
     codes = _codes(client, 8, headers=headers, query_string={"algo": "fixed"})
     checks.append(Check(
         "fixed_window_five_ok_then_429",

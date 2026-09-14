@@ -27,6 +27,17 @@ def run() -> list[Check]:
     cookie = login.headers.get("Set-Cookie", "")
     checks.append(Check("sets_httponly_cookie", "session_id=" in cookie and "HttpOnly" in cookie, cookie[:80]))
 
+    sid = None
+    for part in cookie.split(";"):
+        if part.strip().startswith("session_id="):
+            sid = part.split("=", 1)[1].strip()
+    ttl_at_login = r.ttl(prefixed("session", sid)) if sid else -2
+    checks.append(Check(
+        "login_honors_requested_ttl",
+        sid is not None and 20 <= ttl_at_login <= 30,
+        f"ttl after login={ttl_at_login}s (requested 30)",
+    ))
+
     profile = c1.get("/profile")
     body = profile.get_json() or {}
     checks.append(Check(
@@ -35,18 +46,11 @@ def run() -> list[Check]:
         str(body),
     ))
 
-    sid = None
-    for part in cookie.split(";"):
-        if part.strip().startswith("session_id="):
-            sid = part.split("=", 1)[1].strip()
-    ttl_before = r.ttl(prefixed("session", sid)) if sid else -2
-    time.sleep(1)
-    c1.get("/profile")
     ttl_after = r.ttl(prefixed("session", sid)) if sid else -2
     checks.append(Check(
         "sliding_ttl_extends_on_activity",
         sid is not None and ttl_after >= 250,
-        f"sid={sid is not None} ttl {ttl_before}s -> {ttl_after}s (profile refreshes to 300s)",
+        f"ttl {ttl_at_login}s -> {ttl_after}s (profile refreshes to 300s)",
     ))
 
     c2 = app.test_client()

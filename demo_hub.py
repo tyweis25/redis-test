@@ -53,7 +53,16 @@ SERVERS = {
         # None of these apps define a route for "/", so "Open" must point at
         # a real endpoint - otherwise it 404s ("Not Found") every time.
         "open_path": "/health",
-        "description": "Caches a slow \"database\" lookup in Redis so repeat requests are fast.",
+        "description": (
+            "Simulates a slow 2-second database lookup and caches the result in Redis "
+            "for 30 seconds. The first request is a cache miss (slow); the second is a "
+            "cache hit (fast). DELETE invalidates the key so the next request misses again."
+        ),
+        "how": [
+            "Start the server, then Open /health to confirm Redis is connected.",
+            "Open /users/1 twice: first call ~2s (source: database), second ~0.06s (source: cache).",
+            "Or use the curl commands below, then DELETE /cache/users/1 and fetch again.",
+        ],
         "try_it": [
             ("GET", "/health"),
             ("GET", "/users/1"),
@@ -67,7 +76,18 @@ SERVERS = {
         "module": sessions_module,
         "port": 5001,
         "open_path": "/profile",  # returns a clean 401 JSON error, not a 404, when logged out
-        "description": "Stores login sessions in Redis instead of signed cookies.",
+        "description": (
+            "Stores login sessions in Redis instead of signed cookies. The browser only "
+            "gets an opaque session_id cookie; username and login time live server-side "
+            "and can be revoked instantly. Opening /profile with no cookie returns "
+            "{\"error\": \"not logged in\"} — that's expected until you log in."
+        ),
+        "how": [
+            "Start the server, then use Log in (username defaults to ty) — a new tab shows logged in as ty.",
+            "Click Open: /profile now returns the session JSON from Redis.",
+            "Click Log out, then Open again: /profile goes back to not logged in.",
+            "The curl commands below do the same flow with a cookie jar.",
+        ],
         "try_it": [
             ("POST", "/login", '{"username": "ty"}'),
             ("GET", "/profile"),
@@ -87,7 +107,16 @@ SERVERS = {
         "module": rate_limit_module,
         "port": 5002,
         "open_path": "/api/data",
-        "description": "Fixed-window rate limiting backed by a Redis counter.",
+        "description": (
+            "Fixed-window rate limiter: each client IP gets 5 requests per 30-second "
+            "window, counted with a Redis INCR key that expires with the window. "
+            "Requests 1–5 return 200 with remaining count; 6+ return 429 with Retry-After."
+        ),
+        "how": [
+            "Start the server, then click Open (or fire /api/data) six or more times quickly.",
+            "First five responses: requests_remaining counts down from 4 to 0.",
+            "Sixth and later: {\"error\": \"rate limit exceeded\"} until the 30s window resets.",
+        ],
         "try_it": [
             ("GET", "/api/data"),
         ],
@@ -98,18 +127,61 @@ SCRIPTS = {
     "redis_test": {
         "title": "Basic Redis Connectivity",
         "file": "redis_test.py",
-        "description": "PING, string/list/hash ops, TTL, and server INFO against Redis Cloud.",
+        "description": (
+            "Sanity-check against Redis Cloud: PING, string set/get, INCR, list RPUSH/"
+            "LRANGE, hash HSET/HGETALL, a key with a 10-second TTL, and INFO server. "
+            "Leaves a few keys (greeting, counter, mylist, user:1) with no TTL."
+        ),
+        "how": [
+            "Click Run, or from a terminal: python3 redis_test.py",
+            "Expect: PING True, counter 2, list [a, b, c], hash {name: Ty}, Redis 8.x.",
+            "Note: user:1 is stored as a hash, which collides with app.py's string cache key.",
+        ],
     },
     "agent_memory": {
         "title": "Redis Cloud Agent Memory",
         "file": "agent_memory_demo.py",
-        "description": "Stores/reads session and long-term memory via the Agent Memory service.",
+        "description": (
+            "Talks to Redis Cloud Agent Memory (a separate HTTPS service, not the Redis "
+            "database). Adds a short-term session event, reads it back, stores a long-term "
+            "fact, then searches it. Needs AGENT_MEMORY_API_KEY set in redis_config.py."
+        ),
+        "how": [
+            "Fill in AGENT_MEMORY_API_KEY in redis_config.py (from cloud.redis.io Agent Memory).",
+            "Click Run, or: python3 agent_memory_demo.py",
+            "A placeholder key fails cleanly with 403; a real key prints session + search results.",
+        ],
     },
     "langcache": {
         "title": "Redis LangCache Semantic Caching",
         "file": "langcache_demo.py",
-        "description": "Saves a prompt/response pair and finds it again via semantic search.",
+        "description": (
+            "Managed semantic cache for LLM prompts: stores a prompt/response pair, then "
+            "searches with a differently-worded question and still finds it by meaning "
+            "(~96% similarity), not exact text. Needs LANGCACHE_API_KEY in redis_config.py."
+        ),
+        "how": [
+            "Fill in LANGCACHE_API_KEY in redis_config.py (from the Redis Cloud LangCache page).",
+            "Click Run, or: python3 langcache_demo.py",
+            "A real key returns an entry_id on set, then a CacheEntry with SearchStrategy.SEMANTIC.",
+        ],
     },
+}
+
+PUBSUB = {
+    "title": "Pub/Sub Notifications",
+    "files": "pubsub_publisher.py + pubsub_subscriber.py",
+    "description": (
+        "Fire-and-forget broadcast: the subscriber listens on the 'notifications' channel, "
+        "then the publisher sends 4 messages. Each is delivered live to whoever is "
+        "subscribed at that moment. If nobody is listening, the message is gone "
+        "(unlike a queue or Redis Streams)."
+    ),
+    "how": [
+        "Click Run here — the hub starts the subscriber, waits, runs the publisher, then stops the subscriber.",
+        "Or in two terminals: python3 pubsub_subscriber.py first, then python3 pubsub_publisher.py.",
+        "Expect 4 'Received: ...' lines on the subscriber and 'delivered to 1 subscriber(s)' on the publisher.",
+    ],
 }
 
 _lock = threading.Lock()
@@ -203,8 +275,12 @@ PAGE_STYLE = """
     padding: 1.25rem 1.5rem; margin-bottom: 1rem;
   }
   .card h3 { margin: 0 0 .35rem; font-size: 1.05rem; }
-  .card p { margin: 0 0 .9rem; color: #b7c0cc; font-size: .92rem; }
+  .card p { margin: 0 0 .55rem; color: #b7c0cc; font-size: .92rem; }
   .card code.file { color: #7fd0ff; font-size: .82rem; }
+  .how {
+    margin: 0 0 .9rem; padding-left: 1.1rem; color: #9aa4b2; font-size: .85rem;
+  }
+  .how li { margin: .2rem 0; }
   form { display: inline; }
   button, .open-link {
     background: #3b82f6; color: white; border: none; border-radius: 8px;
@@ -236,6 +312,13 @@ PAGE_STYLE = """
   a.back:hover { text-decoration: underline; }
 </style>
 """
+
+
+def _how_html(steps):
+    if not steps:
+        return ""
+    items = "".join(f"<li>{escape(step)}</li>" for step in steps)
+    return f"<ol class=\"how\">{items}</ol>"
 
 
 def render_index(message=None):
@@ -286,6 +369,7 @@ def render_index(message=None):
         <div class="card">
           <h3>{escape(info['title'])} {badge}</h3>
           <p>{escape(info['description'])} <code class="file">{escape(info['file'])}</code></p>
+          {_how_html(info.get("how"))}
           {action}
           {live_forms_html}
           <div class="try-it">{''.join(try_it_lines)}</div>
@@ -298,6 +382,7 @@ def render_index(message=None):
         <div class="card">
           <h3>{escape(info['title'])}</h3>
           <p>{escape(info['description'])} <code class="file">{escape(info['file'])}</code></p>
+          {_how_html(info.get("how"))}
           <form method="post" action="{url_for('run_script', key=key)}">
             <button type="submit">Run</button>
           </form>
@@ -306,9 +391,9 @@ def render_index(message=None):
 
     script_cards.append(f"""
     <div class="card">
-      <h3>Pub/Sub Notifications</h3>
-      <p>Publishes 4 messages while a subscriber listens live.
-      <code class="file">pubsub_publisher.py</code> + <code class="file">pubsub_subscriber.py</code></p>
+      <h3>{escape(PUBSUB['title'])}</h3>
+      <p>{escape(PUBSUB['description'])} <code class="file">{escape(PUBSUB['files'])}</code></p>
+      {_how_html(PUBSUB.get("how"))}
       <form method="post" action="{url_for('run_script', key='pubsub')}">
         <button type="submit">Run</button>
       </form>

@@ -6,7 +6,7 @@ import time
 import uuid
 
 from redis_agent_memory import AgentMemory, models
-from redis_agent_memory.errors import AgentMemoryError
+from redis_agent_memory.errors import AgentMemoryError, NotFoundErrorResponseContent
 
 from evals.common import Check
 from redis_config import AGENT_MEMORY_API_KEY, AGENT_MEMORY_BASE_URL, AGENT_MEMORY_STORE_ID
@@ -97,13 +97,27 @@ def run() -> list[Check]:
             ))
 
             am.delete_session_memory(session_id=session_a)
-            gone = am.get_session_memory(session_id=session_a)
-            gone_events = list(getattr(gone, "events", None) or [])
-            checks.append(Check(
-                "delete_session_memory",
-                len(gone_events) == 0,
-                f"events after delete={len(gone_events)}",
-            ))
+            try:
+                gone = am.get_session_memory(session_id=session_a)
+                gone_events = list(getattr(gone, "events", None) or [])
+                checks.append(Check(
+                    "delete_session_memory",
+                    len(gone_events) == 0,
+                    f"events after delete={len(gone_events)}",
+                ))
+            except NotFoundErrorResponseContent as e:
+                # Correct API behavior: a deleted session is gone, not empty.
+                checks.append(Check(
+                    "delete_session_memory",
+                    True,
+                    f"GET after delete is 404 Session Not Found ({e})",
+                ))
+
+            try:
+                am.delete_session_memory(session_id=session_b)
+                am.bulk_delete_long_term_memories(memory_ids=[mem_id, decoy_id])
+            except AgentMemoryError:
+                pass
     except AgentMemoryError as e:
-        checks.append(Check("agent_memory_reachable", False, str(e)))
+        checks.append(Check("agent_memory_unexpected_error", False, str(e)))
     return checks

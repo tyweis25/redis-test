@@ -1,10 +1,9 @@
 """
-Redis-backed rate limiting demo (fixed-window algorithm).
+Redis-backed rate limiting demo (fixed-window and sliding-window).
 
-Limits each client to N requests per time window, tracked with a single
-Redis counter key per client per window. This is the same basic
-technique used by API gateways to stop one client from overwhelming
-a service.
+Limits each client to N requests per time window. Fixed window buckets
+by clock slot; sliding window uses a Redis sorted set of timestamps so
+bursts at a window boundary cannot sneak extra requests through.
 
 Install:
     pip3 install flask redis
@@ -14,77 +13,144 @@ Run:
 
 Try it (fire more requests than the limit allows):
     for i in $(seq 1 8); do curl -s -o /dev/null -w "%{http_code}\\n" http://localhost:5002/api/data; done
-
-You should see "200" for the first few requests, then "429" once the
-limit is hit, until the window resets.
 """
 
-import os
+import json
 import time
+import uuid
 
 import redis
 from flask import Flask, jsonify, request
 
+from redis_config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS, prefixed
+
 app = Flask(__name__)
 
-# Set REDIS_HOST/REDIS_PORT/REDIS_PASSWORD/REDIS_TLS env vars to point at
-# Redis Cloud instead of local Redis. See redis_test.py for the full list.
 r = redis.Redis(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
-    password=os.getenv("REDIS_PASSWORD") or None,
-    ssl=os.getenv("REDIS_TLS", "false").lower() == "true",
+    host=REDIS_HOST,
+    port=REDIS_PORT,
+    password=REDIS_PASSWORD,
+    ssl=REDIS_TLS,
     decode_responses=True,
 )
 
-RATE_LIMIT = 5          # max requests
-WINDOW_SECONDS = 30      # per this many seconds
+RATE_LIMIT = 5
+WINDOW_SECONDS = 30
 
 
-def rate_limit_key(client_id: str) -> str:
-    # Bucket requests into fixed windows, e.g. all requests in the same
-    # 30-second slot share one counter.
-    window = int(time.time() // WINDOW_SECONDS)
-    return f"ratelimit:{client_id}:{window}"
+def _params():
+    try:
+        limit = int(request.headers.get("X-RateLimit-Limit") or RATE_LIMIT)
+    except ValueError:
+        limit = RATE_LIMIT
+    try:
+        window = int(request.headers.get("X-RateLimit-Window") or WINDOW_SECONDS)
+    except ValueError:
+        window = WINDOW_SECONDS
+    client_id = (
+        request.headers.get("X-Client-Id")
+        or request.args.get("client_id")
+        or request.remote_addr
+        or "unknown"
+    )
+    algo = (request.args.get("algo") or "fixed").lower()
+    return max(1, limit), max(1, window), client_id, algo
 
 
-def check_rate_limit(client_id: str):
-    key = rate_limit_key(client_id)
-
-    # INCR creates the key at 1 if it doesn't exist yet.
+def check_fixed(client_id: str, limit: int, window: int):
+    slot = int(time.time() // window)
+    key = prefixed("ratelimit", "fixed", client_id, str(slot))
     current = r.incr(key)
     if current == 1:
-        # First request in this window - set the key to expire so it
-        # cleans itself up (also caps the window's lifetime).
-        r.expire(key, WINDOW_SECONDS)
-
+        r.expire(key, window)
     ttl = r.ttl(key)
-    allowed = current <= RATE_LIMIT
-    return allowed, current, ttl
+    return current <= limit, current, ttl
+
+
+def check_sliding(client_id: str, limit: int, window: int):
+    key = prefixed("ratelimit", "sliding", client_id)
+    now = time.time()
+    member = f"{now}:{uuid.uuid4().hex[:8]}"
+    pipe = r.pipeline()
+    pipe.zremrangebyscore(key, 0, now - window)
+    pipe.zadd(key, {member: now})
+    pipe.zcard(key)
+    pipe.expire(key, window)
+    _, _, current, _ = pipe.execute()
+    oldest = r.zrange(key, 0, 0, withscores=True)
+    retry_after = window
+    if oldest:
+        retry_after = max(1, int(window - (now - oldest[0][1])))
+    return current <= limit, current, retry_after
 
 
 @app.route("/api/data", methods=["GET"])
 def get_data():
-    # In a real app, key by API key, user ID, or authenticated identity
-    # rather than raw IP (proxies/NAT can make IP unreliable).
-    client_id = request.remote_addr or "unknown"
-
-    allowed, current, ttl = check_rate_limit(client_id)
+    limit, window, client_id, algo = _params()
+    if algo == "sliding":
+        allowed, current, ttl = check_sliding(client_id, limit, window)
+    else:
+        allowed, current, ttl = check_fixed(client_id, limit, window)
 
     if not allowed:
         return jsonify({
             "error": "rate limit exceeded",
-            "limit": RATE_LIMIT,
-            "window_seconds": WINDOW_SECONDS,
+            "algo": algo,
+            "limit": limit,
+            "window_seconds": window,
+            "client_id": client_id,
             "retry_after_seconds": ttl,
         }), 429, {"Retry-After": str(ttl)}
 
     return jsonify({
         "message": "here is your data",
+        "algo": algo,
         "requests_used": current,
-        "requests_remaining": RATE_LIMIT - current,
+        "requests_remaining": max(0, limit - current),
         "window_resets_in_seconds": ttl,
+        "client_id": client_id,
     })
+
+
+@app.route("/api/charge", methods=["POST"])
+def charge():
+    """
+    Apply a charge once per Idempotency-Key. A retried POST with the same
+    key returns the original result and does not increment the counter.
+    """
+    body = request.get_json(silent=True) or {}
+    amount = body.get("amount", 1)
+    idem = request.headers.get("Idempotency-Key") or body.get("idempotency_key")
+    if not idem:
+        return jsonify({"error": "Idempotency-Key header is required"}), 400
+
+    store_key = prefixed("idempotency", idem)
+    existing = r.get(store_key)
+    if existing and existing != "pending":
+        data = json.loads(existing)
+        data["replay"] = True
+        return jsonify(data)
+
+    reserved = r.set(store_key, "pending", nx=True, ex=120)
+    if not reserved:
+        for _ in range(30):
+            time.sleep(0.05)
+            raw = r.get(store_key)
+            if raw and raw != "pending":
+                data = json.loads(raw)
+                data["replay"] = True
+                return jsonify(data)
+        return jsonify({"error": "idempotency key still pending"}), 409
+
+    applied = r.incr(prefixed("charge", "applied"))
+    payload = {
+        "charge_id": uuid.uuid4().hex[:12],
+        "amount": amount,
+        "applied_count": applied,
+        "replay": False,
+    }
+    r.set(store_key, json.dumps(payload), ex=120)
+    return jsonify(payload)
 
 
 if __name__ == "__main__":

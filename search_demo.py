@@ -130,6 +130,13 @@ def main():
     print("LangCache answers 'did we already answer this prompt?';")
     print("this index answers 'which catalog items are nearby in vector space?'")
 
+    try:
+        r.execute_command("FT.DROPINDEX", INDEX)
+    except redis.exceptions.ResponseError:
+        pass
+    for slug, _doc in docs:
+        r.delete(f"{PREFIX}{slug}")
+
 
 if __name__ == "__main__":
     main()

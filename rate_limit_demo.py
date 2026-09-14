@@ -15,6 +15,7 @@ Try it (fire more requests than the limit allows):
     for i in $(seq 1 8); do curl -s -o /dev/null -w "%{http_code}\\n" http://localhost:5002/api/data; done
 """
 
+import json
 import time
 import uuid
 
@@ -109,6 +110,47 @@ def get_data():
         "window_resets_in_seconds": ttl,
         "client_id": client_id,
     })
+
+
+@app.route("/api/charge", methods=["POST"])
+def charge():
+    """
+    Apply a charge once per Idempotency-Key. A retried POST with the same
+    key returns the original result and does not increment the counter.
+    """
+    body = request.get_json(silent=True) or {}
+    amount = body.get("amount", 1)
+    idem = request.headers.get("Idempotency-Key") or body.get("idempotency_key")
+    if not idem:
+        return jsonify({"error": "Idempotency-Key header is required"}), 400
+
+    store_key = prefixed("idempotency", idem)
+    existing = r.get(store_key)
+    if existing and existing != "pending":
+        data = json.loads(existing)
+        data["replay"] = True
+        return jsonify(data)
+
+    reserved = r.set(store_key, "pending", nx=True, ex=120)
+    if not reserved:
+        for _ in range(30):
+            time.sleep(0.05)
+            raw = r.get(store_key)
+            if raw and raw != "pending":
+                data = json.loads(raw)
+                data["replay"] = True
+                return jsonify(data)
+        return jsonify({"error": "idempotency key still pending"}), 409
+
+    applied = r.incr(prefixed("charge", "applied"))
+    payload = {
+        "charge_id": uuid.uuid4().hex[:12],
+        "amount": amount,
+        "applied_count": applied,
+        "replay": False,
+    }
+    r.set(store_key, json.dumps(payload), ex=120)
+    return jsonify(payload)
 
 
 if __name__ == "__main__":

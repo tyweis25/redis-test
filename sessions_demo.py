@@ -153,6 +153,50 @@ def profile():
     return jsonify({"session": json.loads(raw)})
 
 
+def _presence_ttl():
+    raw = None
+    body = request.get_json(silent=True) or {}
+    raw = body.get("ttl") or request.form.get("ttl") or request.args.get("ttl")
+    if raw is None:
+        return 30
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 30
+
+
+def presence_key(user: str) -> str:
+    return prefixed("presence", user)
+
+
+@app.route("/presence/<user>", methods=["POST"])
+def presence_heartbeat(user):
+    """Mark a user online. The key expires if they stop heartbeating."""
+    ttl = _presence_ttl()
+    r.setex(presence_key(user), ttl, "online")
+    r.sadd(prefixed("presence", "users"), user)
+    r.expire(prefixed("presence", "users"), 3600)
+    return jsonify({"user": user, "status": "online", "ttl_seconds": ttl})
+
+
+@app.route("/presence/<user>", methods=["GET"])
+def presence_status(user):
+    online = r.get(presence_key(user)) is not None
+    return jsonify({"user": user, "online": online})
+
+
+@app.route("/presence", methods=["GET"])
+def presence_list():
+    members = list(r.smembers(prefixed("presence", "users")) or [])
+    online = []
+    for user in members:
+        if r.get(presence_key(user)) is not None:
+            online.append(user)
+        else:
+            r.srem(prefixed("presence", "users"), user)
+    return jsonify({"online": sorted(online)})
+
+
 @app.route("/logout", methods=["POST"])
 def logout():
     session_id = request.cookies.get(COOKIE_NAME)

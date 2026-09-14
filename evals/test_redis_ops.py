@@ -109,5 +109,47 @@ def run() -> list[Check]:
     except (redis.exceptions.AuthenticationError, redis.exceptions.ConnectionError) as e:
         checks.append(Check("bad_password_rejected", True, type(e).__name__))
 
+    board = prefixed("eval", "ops", "board")
+    r.delete(board)
+    r.zincrby(board, 30, "ty")
+    r.zincrby(board, 20, "sam")
+    r.zincrby(board, 15, "ty")
+    top = r.zrevrange(board, 0, -1, withscores=True)
+    checks.append(Check(
+        "leaderboard_ranks_by_score",
+        top == [("ty", 45.0), ("sam", 20.0)],
+        f"top={top}",
+    ))
+
+    hll = prefixed("eval", "ops", "hll")
+    r.delete(hll)
+    r.pfadd(hll, "ty", "sam", "ty", "ada")
+    checks.append(Check("hyperloglog_unique_count", r.pfcount(hll) == 3, f"pfcount={r.pfcount(hll)}"))
+
+    bloom = prefixed("eval", "ops", "bloom")
+    r.delete(bloom)
+    try:
+        r.execute_command("BF.RESERVE", bloom, 0.01, 100)
+        r.execute_command("BF.ADD", bloom, "evt-1")
+        checks.append(Check(
+            "bloom_membership",
+            bool(r.execute_command("BF.EXISTS", bloom, "evt-1"))
+            and not bool(r.execute_command("BF.EXISTS", bloom, "evt-missing")),
+            "evt-1 in, evt-missing out",
+        ))
+    except redis.exceptions.ResponseError as e:
+        checks.append(Check("bloom_membership", False, str(e), skipped=True))
+
+    jobs = prefixed("eval", "ops", "jobs")
+    r.delete(jobs)
+    now = time.time()
+    r.zadd(jobs, {"ready": now - 1, "later": now + 3600})
+    due = list(r.zrangebyscore(jobs, 0, now))
+    checks.append(Check(
+        "delayed_jobs_ready_only",
+        due == ["ready"],
+        f"due={due}",
+    ))
+
     cleanup_prefix(r, "eval", "ops")
     return checks

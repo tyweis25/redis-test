@@ -55,19 +55,20 @@ SERVERS = {
         "open_path": "/health",
         "description": (
             "Simulates a slow 2-second database lookup and caches the result in Redis "
-            "for 30 seconds. The first request is a cache miss (slow); the second is a "
-            "cache hit (fast). DELETE invalidates the key so the next request misses again."
+            "for 30 seconds (L2) plus a process-local L1. DELETE drops Redis and "
+            "PUBLISHes on demo:cache:invalidate so every replica's L1 goes stale. "
+            "A SET NX lock keeps a thundering herd to a single slow fill."
         ),
         "how": [
             "Start the server, then Open /health to confirm Redis is connected.",
             "Open /users/1 twice: first call ~2s (source: database), second ~0.06s (source: cache).",
-            "Or use the curl commands below, then DELETE /cache/users/1 and fetch again.",
+            "GET /cache/l1/1 shows the process-local copy; DELETE notifies other replicas via Pub/Sub.",
             "A Redis SET NX lock keeps a thundering herd to a single slow fill.",
         ],
         "try_it": [
             ("GET", "/health"),
             ("GET", "/users/1"),
-            ("GET", "/users/1"),
+            ("GET", "/cache/l1/1"),
             ("DELETE", "/cache/users/1"),
         ],
     },
@@ -88,11 +89,14 @@ SERVERS = {
             "A new tab shows the session; Open /profile for the JSON from Redis.",
             "Click Log out, then Open again: back to not logged in (Redis key deleted).",
             "The curl commands below do the same flow with a cookie jar. Optional: pass ttl=60.",
+            "POST /presence/ty (optional ?ttl=30) then GET /presence — expires if heartbeats stop.",
         ],
         "try_it": [
             ("POST", "/login", '{"username": "ty"}'),
             ("GET", "/profile"),
             ("POST", "/logout"),
+            ("POST", "/presence/ty", '{"ttl": 30}'),
+            ("GET", "/presence"),
         ],
         # Real HTML forms (not curl) so you can log in/out from the browser
         # and then click "Open" to see /profile reflect it - opens each
@@ -119,10 +123,12 @@ SERVERS = {
             "First five responses: requests_remaining counts down from 4 to 0.",
             "Sixth and later: {\"error\": \"rate limit exceeded\"} until the 30s window resets.",
             "Try /api/data?algo=sliding to see the ZSET sliding window.",
+            "POST /api/charge with Idempotency-Key: a retry returns the same charge_id.",
         ],
         "try_it": [
             ("GET", "/api/data"),
             ("GET", "/api/data?algo=sliding"),
+            ("POST", "/api/charge", '{"amount": 12}'),
         ],
     },
 }
@@ -139,6 +145,7 @@ SCRIPTS = {
         "how": [
             "Click Run, or from a terminal: python3 redis_test.py",
             "Expect: PING True, counter 2, list [a, b, c], hash {name: Ty}, Redis 8.x.",
+            "Also prints a leaderboard, HyperLogLog uniques, Bloom membership, and due delayed jobs.",
         ],
     },
     "agent_memory": {
@@ -153,6 +160,7 @@ SCRIPTS = {
             "Fill in AGENT_MEMORY_API_KEY in redis_config.py (from cloud.redis.io Agent Memory).",
             "Click Run, or: python3 agent_memory_demo.py",
             "A placeholder key fails cleanly with 403; a real key prints session + search results.",
+            "The script then deletes the session and searches long-term again — the fact remains.",
         ],
     },
     "streams": {
@@ -164,7 +172,7 @@ SCRIPTS = {
         ),
         "how": [
             "Click Run, or: python3 streams_demo.py",
-            "Expect XADD of 3 messages, then the group reads all 3 after the fact.",
+            "Expect XADD of 3 jobs, worker-1 reads then 'crashes' (no XACK), worker-2 claims and ACKs.",
         ],
     },
     "langcache": {
@@ -179,6 +187,20 @@ SCRIPTS = {
             "Fill in LANGCACHE_API_KEY in redis_config.py (from the Redis Cloud LangCache page).",
             "Click Run, or: python3 langcache_demo.py",
             "A real key returns an entry_id on set, then a CacheEntry with SearchStrategy.SEMANTIC.",
+            "It also writes the same prompt under tenant=acme and tenant=globex to show isolation.",
+        ],
+    },
+    "search": {
+        "title": "JSON, Search, and Vectors",
+        "file": "search_demo.py",
+        "description": (
+            "Redis 8 modules on this Cloud DB: store a catalog as JSON, FT.SEARCH by "
+            "TAG, then KNN over a tiny embedding. That's 'what is similar in my corpus?' "
+            "LangCache is 'did we already answer this prompt?'"
+        ),
+        "how": [
+            "Click Run, or: python3 search_demo.py",
+            "Expect two fruit docs from @category:{fruit}, and red apple first on KNN [1,0,0,0].",
         ],
     },
 }
@@ -430,7 +452,7 @@ def render_index(message=None):
       LangCache / Agent Memory are skipped without real API keys.
       <code class="file">run_evals.py</code></p>
       <ol class="how">
-        <li>Click Run eval suite (takes ~30–60s; rate-limit window wait is ~8s).</li>
+        <li>Click Run eval suite (about a minute; rate-limit window wait is ~8s).</li>
         <li>Or: <code>python3 run_evals.py</code> / <code>python3 run_evals.py --json</code></li>
         <li>Exit code 0 only if every non-skipped check passed.</li>
       </ol>
@@ -493,9 +515,9 @@ def run_script(key):
 
     if key == "evals":
         try:
-            result = _run_subprocess("run_evals.py", timeout=180)
+            result = _run_subprocess("run_evals.py", timeout=240)
         except subprocess.TimeoutExpired:
-            return render_result("Eval suite", "Timed out after 180 seconds.", 1)
+            return render_result("Eval suite", "Timed out after 240 seconds.", 1)
         output = result.stdout + result.stderr
         return render_result("Eval suite", output, result.returncode)
 

@@ -23,7 +23,7 @@ Run:
 import time
 
 from redis_agent_memory import AgentMemory, models
-from redis_agent_memory.errors import AgentMemoryError
+from redis_agent_memory.errors import AgentMemoryError, NotFoundErrorResponseContent
 
 from redis_config import AGENT_MEMORY_API_KEY, AGENT_MEMORY_BASE_URL, AGENT_MEMORY_STORE_ID
 
@@ -62,6 +62,16 @@ def main():
             # 4. Search long-term memory
             results = agent_memory.search_long_term_memory(request={"text": "What is semantic memory?"})
             print("Search results:\n", results)
+
+            # Session is short-term. Deleting it must not erase long-term facts.
+            agent_memory.delete_session_memory(session_id=SESSION_ID)
+            try:
+                gone = agent_memory.get_session_memory(session_id=SESSION_ID)
+                print("Session after delete:\n", gone)
+            except NotFoundErrorResponseContent:
+                print("Session after delete: 404 Session Not Found (expected)")
+            still = agent_memory.search_long_term_memory(request={"text": "What is semantic memory?"})
+            print("Long-term search after session delete:\n", still)
 
     except AgentMemoryError as e:
         print(f"Agent Memory request failed: {e}")

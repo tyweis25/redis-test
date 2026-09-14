@@ -75,4 +75,34 @@ def run() -> list[Check]:
         other.status_code == 200 and other.get_json().get("client_id") == "eval-other",
         str(other.get_json()),
     ))
+
+    cleanup_prefix(redis_client(), "idempotency")
+    cleanup_prefix(redis_client(), "charge")
+    first = client.post(
+        "/api/charge",
+        json={"amount": 12},
+        headers={"Idempotency-Key": "eval-charge-1"},
+    )
+    second = client.post(
+        "/api/charge",
+        json={"amount": 12},
+        headers={"Idempotency-Key": "eval-charge-1"},
+    )
+    other_charge = client.post(
+        "/api/charge",
+        json={"amount": 5},
+        headers={"Idempotency-Key": "eval-charge-2"},
+    )
+    a, b, c = first.get_json() or {}, second.get_json() or {}, other_charge.get_json() or {}
+    checks.append(Check(
+        "idempotent_retry_does_not_double_charge",
+        first.status_code == 200
+        and second.status_code == 200
+        and a.get("replay") is False
+        and b.get("replay") is True
+        and a.get("charge_id") == b.get("charge_id")
+        and a.get("applied_count") == b.get("applied_count")
+        and c.get("applied_count") == a.get("applied_count") + 1,
+        f"first={a} replay={b} other={c}",
+    ))
     return checks

@@ -89,5 +89,47 @@ def run() -> list[Check]:
         extra={"generated_at": list(generated), "db_fills": db_fills},
     ))
 
+    cache_app.clear_l1()
+    user_id = 9103
+    client.get(f"/users/{user_id}")
+    l1 = client.get(f"/cache/l1/{user_id}").get_json()
+    checks.append(Check(
+        "l1_populated_after_get",
+        l1.get("present") is True,
+        str(l1),
+    ))
+
+    replica: dict[str, str] = {str(user_id): "stale-from-other-process"}
+    replica_ready = threading.Event()
+
+    def listen_replica():
+        pubsub = redis_client().pubsub()
+        pubsub.subscribe(cache_app.INVALIDATE_CHANNEL)
+        replica_ready.set()
+        for message in pubsub.listen():
+            if message["type"] != "message":
+                continue
+            replica.pop(str(message["data"]), None)
+            break
+        pubsub.unsubscribe(cache_app.INVALIDATE_CHANNEL)
+        pubsub.close()
+
+    t = threading.Thread(target=listen_replica, daemon=True)
+    t.start()
+    replica_ready.wait(timeout=5)
+    time.sleep(0.3)
+    invalidated = client.delete(f"/cache/users/{user_id}").get_json()
+    t.join(timeout=5)
+    time.sleep(0.3)
+    l1_after = client.get(f"/cache/l1/{user_id}").get_json()
+    checks.append(Check(
+        "pubsub_invalidation_clears_local_and_replica_l1",
+        l1_after.get("present") is False
+        and str(user_id) not in replica
+        and invalidated.get("invalidated") is True,
+        f"l1={l1_after} replica={replica} pubsub={invalidated}",
+    ))
+
+    cache_app.clear_l1()
     cleanup_prefix(r, "cache")
     return checks

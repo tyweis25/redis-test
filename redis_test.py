@@ -11,6 +11,7 @@ Install the client library first:
 
 import redis
 import sys
+import time
 
 from redis_config import REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_TLS, prefixed
 
@@ -63,7 +64,42 @@ def main():
         ttl = r.ttl(prefixed("temp_key"))
         print(f"TTL on temp_key -> {ttl} seconds")
 
-        # 7. Server info
+        # 7. Leaderboard (sorted set)
+        board = prefixed("leaderboard")
+        r.delete(board)
+        r.zincrby(board, 30, "ty")
+        r.zincrby(board, 20, "sam")
+        r.zincrby(board, 15, "ty")
+        top = r.zrevrange(board, 0, -1, withscores=True)
+        print(f"Leaderboard -> {top}")
+
+        # 8. Unique visitors (HyperLogLog)
+        hll = prefixed("visitors")
+        r.delete(hll)
+        r.pfadd(hll, "ty", "sam", "ty", "ada")
+        print(f"HyperLogLog unique visitors -> {r.pfcount(hll)}")
+
+        # 9. "Have we seen this id?" (Bloom filter, if the bf module is loaded)
+        bloom = prefixed("seen")
+        r.delete(bloom)
+        try:
+            r.execute_command("BF.RESERVE", bloom, 0.01, 100)
+            r.execute_command("BF.ADD", bloom, "evt-1")
+            seen = bool(r.execute_command("BF.EXISTS", bloom, "evt-1"))
+            unseen = bool(r.execute_command("BF.EXISTS", bloom, "evt-missing"))
+            print(f"Bloom seen evt-1={seen} evt-missing={unseen}")
+        except redis.exceptions.ResponseError as e:
+            print(f"Bloom filter not available: {e}")
+
+        # 10. Delayed jobs (sorted set of due timestamps)
+        jobs = prefixed("jobs")
+        r.delete(jobs)
+        now = int(time.time())
+        r.zadd(jobs, {"ready-now": now - 1, "later": now + 3600})
+        due = r.zrangebyscore(jobs, 0, now)
+        print(f"Delayed jobs due now -> {due}")
+
+        # 11. Server info
         info = r.info("server")
         print(f"Redis version -> {info.get('redis_version')}")
 

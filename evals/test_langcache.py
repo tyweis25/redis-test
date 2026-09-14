@@ -125,6 +125,46 @@ def run() -> list[Check]:
                 f"hits after 2.2s={len(_hits(after))}",
             ))
 
+            tenant_ok = False
+            try:
+                cache.set(
+                    prompt="What is my plan?",
+                    response="acme enterprise plan",
+                    attributes={"tenant": "acme"},
+                    ttl_millis=180_000,
+                )
+                cache.set(
+                    prompt="What is my plan?",
+                    response="globex starter plan",
+                    attributes={"tenant": "globex"},
+                    ttl_millis=180_000,
+                )
+                tenant_ok = True
+            except LangCacheError as e:
+                checks.append(Check(
+                    "tenant_attribute_isolation",
+                    False,
+                    f"this cache rejected attributes: {e}",
+                    skipped=True,
+                ))
+
+            if tenant_ok:
+                acme = _hits(cache.search(prompt="What is my plan?", attributes={"tenant": "acme"}))
+                globex = _hits(cache.search(prompt="What is my plan?", attributes={"tenant": "globex"}))
+                acme_text = " ".join(str(getattr(e, "response", "")) for e in acme)
+                globex_text = " ".join(str(getattr(e, "response", "")) for e in globex)
+                checks.append(Check(
+                    "tenant_attribute_isolation",
+                    "acme" in acme_text.lower() and "globex" not in acme_text.lower()
+                    and "globex" in globex_text.lower() and "acme" not in globex_text.lower(),
+                    f"acme={acme_text!r} globex={globex_text!r}",
+                ))
+                try:
+                    cache.delete_query(attributes={"tenant": "acme"})
+                    cache.delete_query(attributes={"tenant": "globex"})
+                except LangCacheError:
+                    pass
+
             if attr:
                 try:
                     cache.delete_query(attributes=attr)

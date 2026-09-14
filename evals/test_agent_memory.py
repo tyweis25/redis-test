@@ -113,6 +113,18 @@ def run() -> list[Check]:
                     f"GET after delete is 404 Session Not Found ({e})",
                 ))
 
+            still = am.search_long_term_memory(
+                request={"text": f"What is the eval mascot for run {run_id}?"}
+            )
+            still_items = list(getattr(still, "items", None) or [])
+            still_text = getattr(still_items[0], "text", "") if still_items else ""
+            still_id = getattr(still_items[0], "id", None) if still_items else None
+            checks.append(Check(
+                "long_term_survives_session_delete",
+                "axolotl" in str(still_text).lower() or still_id == mem_id,
+                f"n={len(still_items)} text={still_text!r}",
+            ))
+
             try:
                 am.delete_session_memory(session_id=session_b)
                 am.bulk_delete_long_term_memories(memory_ids=[mem_id, decoy_id])

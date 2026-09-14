@@ -34,5 +34,24 @@ def run() -> list[Check]:
     empty = again == [] or again[0][1] == []
     checks.append(Check("already_delivered_not_redelivered_as_new", empty, f"second read={again}"))
 
+    pending = r.xpending_range(stream, group, min="-", max="+", count=10)
+    checks.append(Check(
+        "unacked_jobs_stay_pending",
+        len(pending or []) == 2,
+        f"pending={pending}",
+    ))
+
+    for entry in pending or []:
+        msg_id = entry["message_id"] if isinstance(entry, dict) else entry[0]
+        r.xclaim(stream, group, "c2", min_idle_time=0, message_ids=[msg_id])
+        r.xack(stream, group, msg_id)
+
+    leftover = r.xpending_range(stream, group, min="-", max="+", count=10)
+    checks.append(Check(
+        "claim_and_ack_clears_pending",
+        len(leftover or []) == 0,
+        f"leftover={leftover}",
+    ))
+
     r.delete(stream)
     return checks

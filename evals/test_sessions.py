@@ -85,4 +85,23 @@ def run() -> list[Check]:
 
     page = app.test_client().get("/")
     checks.append(Check("html_home_renders", page.status_code == 200 and b"Log in" in page.data, "GET /"))
+
+    c4 = app.test_client()
+    c4.post("/presence/alice", json={"ttl": 2})
+    c4.post("/presence/bob", json={"ttl": 30})
+    listed = c4.get("/presence").get_json() or {}
+    checks.append(Check(
+        "presence_lists_heartbeats",
+        set(listed.get("online") or []) >= {"alice", "bob"},
+        str(listed),
+    ))
+    time.sleep(2.3)
+    after = c4.get("/presence").get_json() or {}
+    alice = c4.get("/presence/alice").get_json() or {}
+    bob = c4.get("/presence/bob").get_json() or {}
+    checks.append(Check(
+        "presence_expires_without_heartbeat",
+        alice.get("online") is False and bob.get("online") is True and "alice" not in (after.get("online") or []),
+        f"list={after} alice={alice} bob={bob}",
+    ))
     return checks

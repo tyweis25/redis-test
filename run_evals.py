@@ -21,6 +21,7 @@ from evals import (
     test_pubsub,
     test_rate_limit,
     test_redis_ops,
+    test_search,
     test_sessions,
     test_streams,
 )
@@ -32,6 +33,7 @@ SUITES = [
     ("cache_aside", test_cache_aside.run),
     ("sessions", test_sessions.run),
     ("rate_limit", test_rate_limit.run),
+    ("search", test_search.run),
     ("langcache", test_langcache.run),
     ("agent_memory", test_agent_memory.run),
 ]

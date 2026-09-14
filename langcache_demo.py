@@ -49,6 +49,25 @@ def main():
             )
             print("Search entry response:\n", search_response)
 
+            # Tenant isolation: same prompt, different attributes, must not leak.
+            try:
+                lang_cache.set(
+                    prompt="What is my plan?",
+                    response="acme enterprise plan",
+                    attributes={"tenant": "acme"},
+                )
+                lang_cache.set(
+                    prompt="What is my plan?",
+                    response="globex starter plan",
+                    attributes={"tenant": "globex"},
+                )
+                acme = lang_cache.search(prompt="What is my plan?", attributes={"tenant": "acme"})
+                globex = lang_cache.search(prompt="What is my plan?", attributes={"tenant": "globex"})
+                print("Tenant acme search:\n", acme)
+                print("Tenant globex search:\n", globex)
+            except LangCacheError as e:
+                print(f"Tenant attributes not available on this cache: {e}")
+
     except LangCacheError as e:
         print(f"LangCache request failed: {e}")
         print("Double-check LANGCACHE_API_KEY (and CACHE_ID/SERVER_URL) in redis_config.py.")
